@@ -5,7 +5,7 @@ import javax.management.relation.Role
 import org.apache
 import org.apache.hadoop.yarn.webapp.hamlet.HamletSpec.{A, B}
 import org.apache.spark
-import org.apache.spark.ml.Pipeline
+import org.apache.spark.ml.{Pipeline, PipelineModel}
 import org.apache.spark.ml.classification.RandomForestClassifier
 import org.apache.spark.ml.evaluation.BinaryClassificationEvaluator
 import org.apache.spark.{SparkConf, SparkContext}
@@ -16,6 +16,7 @@ import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.Encoder
 import org.apache.spark.sql.functions._
 import org.apache.spark.ml.feature._
+import org.apache.spark.ml.tuning.{CrossValidator, ParamGridBuilder}
 
 
 /**
@@ -39,7 +40,7 @@ object KaggleGrand {
         import spark.implicits._
 
 // loading data
-                //from path according to your needs
+        //from path according to your needs
 
         val df = spark.read
                 .option("delimiter", "\t")
@@ -82,10 +83,10 @@ object KaggleGrand {
         val value_band = new StringIndexer().setInputCol("Value_Band").setOutputCol("Value_Index").fit(grants)
         val category_indexer = new StringIndexer().setInputCol("Category_Code").setOutputCol("Category_Index").fit(grants)
         val label_indexer = new StringIndexer().setInputCol("Grant_Status").setOutputCol("status").fit(grants)
-        val assembler = new VectorAssembler().setInputCols(Array("Value_Index", "Category_Index","PHDs",  "paperscore", "teamsize", "successes", "failures")).setOutputCol("assembled")
+        val assembler = new VectorAssembler().setInputCols(Array("Value_Index", "Category_Index", "PHDs", "paperscore", "teamsize", "successes", "failures")).setOutputCol("assembled")
 
-//        set up our ML model
-        val model =new RandomForestClassifier().setFeaturesCol("assembled").setLabelCol("status").setSeed(42)
+        //        set up our ML model
+        val model = new RandomForestClassifier().setFeaturesCol("assembled").setLabelCol("status").setSeed(42)
 
         // set up our piplene
 
@@ -97,20 +98,45 @@ object KaggleGrand {
 
         System.out.println(auc_eval.getMetricName)
 
-//        split traning i data set
+        //        split traning i data set
         val training = grants.filter("Grant_Application_ID < 6635")
         val test = grants.filter("Grant_Application_ID >= 6635")
 
 //        start our pipline, train model and transform (predict) data
+//        replace 1 papline aproach to serias with different parametrs model
+//        val pipline_result = pipline.fit(training)
+//                .transform(test)
 
-        val pipline_result = pipline.fit(training)
-                .transform(test)
 
+// some params to tune our model via crossValidation
 
-grants.show(30)
+        val paramGrid = new ParamGridBuilder().addGrid(model.maxDepth, Array(10, 30))
+                .addGrid(model.numTrees, Array(10, 100))
+                .build()
 
+//      cross validation
+
+        val cv = new CrossValidator().setEstimator(pipline)
+                .setEvaluator(auc_eval)
+                .setEstimatorParamMaps(paramGrid)
+                .setNumFolds(3)
+
+        //        start series of train and testing models with different parametrs, and choose better one.
+        val model_train = cv.fit(training)
+        val pipeline_result = model_train.transform(test)
+
+        grants.show(30)
+
+val bestModelParametrMap =        model_train.getEstimatorParamMaps
+                .zip(model_train.avgMetrics)
+                .maxBy(_._2)._1
+
+        val bestPipelineModel = model_train.bestModel.asInstanceOf[PipelineModel]
+//        bestPipelineModel.stages(4).asInstanceOf[RandomForestClassifier].toDebugString
+        System.out.println("best model parametrs:")
+        System.out.println("best model parametrs:")
         System.out.println("evaluating our result as area onder ROC curve : ")
-        System.out.println(auc_eval.evaluate(pipline_result))
+        System.out.println(auc_eval.evaluate(pipeline_result))
 
     }
 }

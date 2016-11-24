@@ -1,3 +1,3 @@
 # kaggle-tasks
-some task
-solution are made with scala + spark
+some tasks
+solutions are made with scala + spark
